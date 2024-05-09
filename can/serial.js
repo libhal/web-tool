@@ -1,4 +1,4 @@
-// Copyright 2023 Google LLC
+// Copyright 2024 Khalil Estell
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,6 +14,7 @@
 
 let port;
 let reader;
+let writer;
 let device_connected = false;
 const decoder = new TextDecoder("utf-8");
 const encoder = new TextEncoder("utf-8");
@@ -21,9 +22,56 @@ const encoder = new TextEncoder("utf-8");
 function getBaudRate() {
   let baudrate = document.querySelector("#baudrate").value;
   if (baudrate === "custom") {
-    baudrate = document.querySelector("#baudrate_custom").value;
+    baudrate = document.querySelector("#baudrate-input").value;
   }
   return Number(baudrate);
+}
+
+async function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function initSerialCanBus() {
+  const text_decoder = new TextDecoder();
+
+  if (!(port.readable && device_connected)) {
+    port.close();
+    throw "Failure to use device!";
+  }
+
+  try {
+    console.log("sending 4 carriage returns");
+    writer.write(encoder.encode("\r\r\r\r"));
+    await sleep(250);
+
+    console.log("sending V");
+    writer.write(encoder.encode("V\r"));
+    await sleep(250);
+
+    let { response, _ } = await reader.read();
+    console.log("version ", text_decoder.decode(response));
+
+    console.log("sending S3");
+    writer.write(encoder.encode("S3\r"));
+    await sleep(250);
+
+    console.log("sending O");
+    writer.write(encoder.encode("O\r"));
+    await sleep(250);
+
+    console.log("sending t10021133");
+    writer.write(encoder.encode("t10021133\r"));
+    await sleep(250);
+
+    // console.log("", text_decoder.decode(response));
+  } catch (error) {
+    disconnectFromDevice();
+    console.error(error);
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 async function connectToDevice() {
@@ -36,12 +84,13 @@ async function connectToDevice() {
     device_connected = true;
     document.querySelector("#connect-btn").innerText = "Disconnect";
     document.querySelector("#baudrate").setAttribute("disabled", true);
-    document.querySelector("#dtr-checkbox").removeAttribute("disabled");
-    document.querySelector("#rts-checkbox").removeAttribute("disabled");
-    readFromDevice();
+    reader = port.readable.getReader();
+    writer = port.writable.getWriter();
+    await initSerialCanBus();
+    // readFromDevice();
   } catch (error) {
-    const notFoundText = "NotFoundError: No port selected by the user.";
-    const userCancelledConnecting = String(error) === notFoundText;
+    const notFoundText = "NotFoundError:";
+    const userCancelledConnecting = String(error).startsWith(notFoundText);
     if (!userCancelledConnecting) {
       alert(`Could not connect to serial device: ${error}`);
     }
@@ -50,7 +99,6 @@ async function connectToDevice() {
 
 async function readFromDevice() {
   while (port.readable && device_connected) {
-    reader = port.readable.getReader();
     try {
       while (true) {
         const { value, done } = await reader.read();
@@ -59,7 +107,7 @@ async function readFromDevice() {
         }
         let decoded = new TextDecoder().decode(value);
         decoded = decoded.replace(/\n/g, "\r\n");
-        term.write(decoded);
+        console.log("can data: ", decoded);
       }
     } catch (error) {
       disconnectFromDevice();
@@ -72,14 +120,10 @@ async function readFromDevice() {
 }
 
 async function writeToDevice(input) {
-  let cr = flags.get("carriage-return-checkbox") ? "\r" : "";
-  let nl = flags.get("newline-select") ? "\n" : "";
-  const payload = `${input}${cr}${nl}`;
-
   if (port.writable) {
-    const writer = port.writable.getWriter();
+    writer = port.writable.getWriter();
     try {
-      await writer.write(encoder.encode(payload));
+      await writer.write(encoder.encode(input));
     } catch (error) {
       console.error(error);
     } finally {
@@ -89,12 +133,10 @@ async function writeToDevice(input) {
 }
 
 async function writeCharacterToDevice(input) {
-  const payload = `${input}`;
-
   if (port.writable) {
-    const writer = port.writable.getWriter();
+    writer = port.writable.getWriter();
     try {
-      await writer.write(encoder.encode(payload));
+      await writer.write(encoder.encode(input));
     } catch (error) {
       console.error(error);
     } finally {
@@ -110,8 +152,4 @@ function disconnectFromDevice() {
   }
   document.querySelector("#connect-btn").innerText = "Connect";
   document.querySelector("#baudrate").removeAttribute("disabled");
-  document.querySelector("#dtr-checkbox").setAttribute("disabled", true);
-  document.querySelector("#rts-checkbox").setAttribute("disabled", true);
-  document.querySelector("#dtr-checkbox").removeAttribute("disabled");
-  document.querySelector("#rts-checkbox").removeAttribute("disabled");
 }
